@@ -53,8 +53,8 @@ def handle_start(message):
         city_buttons.add(btn)
 
 
-    sent_message = bot.send_message(chat_id, "Привет! Я бот для создания объявлений. Давай начнем! Выбери свой город:\n",
-                     reply_markup=city_buttons)
+    sent_message = bot.send_message(chat_id, " <strong> Выберите город </strong> в котором хотите разместить объявление.:\n",
+                     reply_markup=city_buttons, parse_mode='HTML')
     users_db[chat_id] = {}
     users_db[chat_id]['current_message'] = sent_message.message_id
 
@@ -81,31 +81,68 @@ def handle_city_choice(call):
         # create_db(chat_id, users_db[chat_id]['username'], users_db[chat_id]['city'])
 
         bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
-        # bot.send_message(chat_id, f"Вы выбрали город {call.data}. \n"
-        #                           f"➕<strong> Прикрепите фото </strong> вашего мероприятия. Лучше если фото будет \n"
-        #                           f"квадратным, это наиболее подходящие габариты изображения. \n"
-        #                           f"Для того, чтобы вернуться к выбору города нажмите /cancel"
-        #             , parse_mode='HTML')
 
-        bot.send_message(chat_id, f"Вы выбрали город {call.data}. \n"
-                                  f"<strong>Введите тему мероприятия. </strong> \n"
-                                  f"Это может быть бизнес форум, нетворкинг, \n"
-                                  f"фото-девичник, балет, выставка, научная \n"
-                                  f"конференция или даже бесплатная открытая \n"
-                                  f"встреча. \n \n"
-                                  f"Пример: Балет в 2-х действиях \n \n"
-                                  f"Тема(вид) мероприятия всегда выделяется \n"
-                                  f"жирным, но вам её <strong> выделять жирным НЕ нужно </strong> \n"
-                                  f"Для того, чтобы начать ввод объявление заново нажмите /cancel"
+        skip_button = types.KeyboardButton("Пропустить")
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        keyboard.add(skip_button)
 
-                         , parse_mode='HTML')
+        sent_message = bot.send_message(chat_id, f"Вы выбрали город {call.data}. \n"
+                                  f"➕<strong> Прикрепите фото </strong> вашего мероприятия. Лучше если фото будет \n"
+                                  f"квадратным, это наиболее подходящие габариты изображения. \n \n"
+                                  f"Если у вас публикация без изображения, нажмите 'Пропустить' \n \n"
+                                  f"Для того, чтобы вернуться к выбору города нажмите /cancel"
+                    , parse_mode='HTML', reply_markup=keyboard)
+        users_db[chat_id]['current_message'] = sent_message.message_id
 
-
-
-        bot.register_next_step_handler(call.message, handle_topic_input)
+        bot.register_next_step_handler(call.message, handle_event_image_input)
     else:
         bot.send_message(call.chat.id, 'Некорректный ввод')
         bot.register_next_step_handler(call, handle_city_choice)
+
+
+#Обработка изображения для поста
+def handle_event_image_input(message):
+    next_pattern = f"<strong>Введите тему мероприятия. </strong> \n"\
+                   f"Это может быть бизнес форум, нетворкинг, \n"\
+                   f"фото-девичник, балет, выставка, научная \n"\
+                   f"конференция или даже бесплатная открытая \n"\
+                   f"встреча. \n \n"\
+                   f"Пример: Балет в 2-х действиях \n \n"\
+                   f"Тема(вид) мероприятия всегда выделяется \n"\
+                   f"жирным, но вам её <strong> выделять жирным НЕ нужно </strong> \n"\
+                   f"Для того, чтобы начать ввод объявление заново нажмите /cancel"
+    if message.text:
+        if message.text == '/cancel':
+            handle_cancel(message)
+        elif message.text == 'Пропустить':
+            users_db[message.chat.id]['image'] = 'skip'
+            remove_keyboard = types.ReplyKeyboardRemove()
+            bot.send_message(message.chat.id, f'Ввод изображения пропущен', reply_markup=remove_keyboard)
+            sent_message = bot.send_message(message.chat.id, next_pattern, parse_mode='HTML')
+            users_db[message.chat.id]['current_message'] = sent_message.message_id
+            bot.register_next_step_handler(message, handle_topic_input)
+        else:
+            bot.send_message(message.chat.id, 'Загрузите изображение или нажмите "Пропустить"\n \n'
+                                              f'(Если вы хотите прервать процесс создания объявления, введите команду /cancel\n',
+                             )
+            bot.register_next_step_handler(message, handle_event_image_input)
+    elif message.photo:
+        try:
+            chat_id = message.chat.id
+            users_db[chat_id]['image'] = message.photo[-1].file_id
+        except KeyError:
+            handle_cancel(message)
+            return
+
+        remove_keyboard = types.ReplyKeyboardRemove()
+        sent_message = bot.send_message(chat_id, next_pattern, parse_mode='HTML', reply_markup=remove_keyboard)
+
+
+        users_db[chat_id]['current_message'] = sent_message.message_id
+        bot.register_next_step_handler(message, handle_topic_input)
+    else:
+        bot.send_message(message.chat.id, 'Некорректный ввод')
+        bot.register_next_step_handler(message, handle_event_image_input)
 
 # Обработка ввода темы мероприятия
 def handle_topic_input(message):
@@ -118,18 +155,6 @@ def handle_topic_input(message):
                 handle_cancel(message)
                 return
 
-            # bot.send_message(chat_id, f"<strong> Введите тему мероприятия. </strong> \n"
-            #                           f"Это может быть бизнес форум, нетворкинг, \n"
-            #                           f"фото-девичник, балет, выставка, научная \n"
-            #                           f"конференция или даже бесплатная открытая \n"
-            #                           f"встреча. \n \n"
-            #                           f"Пример: Балет в 2-х действиях \n \n"
-            #                           f"Тема(вид) мероприятия всегда выделяется \n"
-            #                           f"жирным, но вам её <strong> выделять жирным НЕ нужно </strong> \n"
-            #                           f"Для того, чтобы начать ввод объявление заново нажмите /cancel"
-            #                  , parse_mode='HTML')
-
-            # bot.send_photo(chat_id, )
 
             bot.send_message(chat_id, f"Введите <strong> название мероприятия </strong> \n \n"
                                       f"Введите название вашего мероприятия. Кавычки не нужны! \n \n"
@@ -154,53 +179,23 @@ def handle_event_name_input(message):
                 try:
                     chat_id = message.chat.id
                     users_db[chat_id]['event_name'] = message.text
+                    send_current_state(chat_id, 'user')
                 except KeyError:
                     handle_cancel(message)
                     return
 
-                # bot.send_message(chat_id, f"Введите <strong> название мероприятия </strong> \n \n"
-                #                           f"Введите название вашего мероприятия. Кавычки ненужны! \n \n"
-                #                           f"Для того, чтобы начать ввод объявление заново нажмите /cancel", parse_mode='HTML')
+                calendar, step = DetailedTelegramCalendar().build()
+                sent_message = bot.send_message(message.chat.id,
+                                 f"Теперь заполним конкретику по нашему мероприятию \n \n"
+                                 f"<strong>Введите дату </strong> начала мероприятия",
+                                 reply_markup=calendar, parse_mode='HTML')
+                users_db[chat_id]['current_message'] = sent_message.message_id
 
-                bot.send_message(chat_id, f"➕<strong>Прикрепите фото</strong> вашего мероприятия. Лучше если фото будет\n"
-                                          f"квадратным, это наиболее подходящие габариты изображения.\n"
-                                          f"Для того, чтобы вернуться к выбору города нажмите /cancel"
-                                 , parse_mode='HTML')
-
-                bot.register_next_step_handler(message, handle_event_image_input)
             elif message.text == '/cancel':
                 handle_cancel(message)
     else:
         bot.send_message(message.chat.id, 'Некорректный ввод')
         bot.register_next_step_handler(message, handle_event_name_input)
-
-#Обработка изображения для поста
-def handle_event_image_input(message):
-    if message.text:
-        if message.text == '/cancel':
-            handle_cancel(message)
-        else:
-            bot.send_message(message.chat.id, 'Загрузите изображение\n \n'
-                                              f'(Если вы хотите прервать процесс создания объявления, введите команду /cancel\n',
-                             )
-            bot.register_next_step_handler(message, handle_event_image_input)
-    elif message.photo:
-        try:
-            chat_id = message.chat.id
-            users_db[chat_id]['image'] = message.photo[-1].file_id
-            send_current_state(chat_id, 'user')
-        except KeyError:
-            handle_cancel(message)
-            return
-
-        calendar, step = DetailedTelegramCalendar().build()
-        sent_message = bot.send_message(message.chat.id,
-                         f"<strong>Введите дату </strong> начала мероприятия",
-                         reply_markup=calendar, parse_mode='HTML')
-        users_db[chat_id]['current_message'] = sent_message.message_id
-    else:
-        bot.send_message(message.chat.id, 'Некорректный ввод')
-        bot.register_next_step_handler(message, handle_event_image_input)
 
 
 #ОБРАБОТЧИК ДЛЯ ДАТЫ
@@ -282,18 +277,15 @@ def handle_event_people_count(message):
                 handle_cancel(message)
                 return
 
-            skip_button = types.KeyboardButton("Пропустить")
-            keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-            keyboard.add(skip_button)
 
-            bot.send_message(message.chat.id, f'<strong>Введите оффер </strong> (необязательно): \n \n'
-                                              f'Оффер - это предложение(сильное \n'
-                                              f'предложение), стимулирующее к тому,\n'
-                                              f'чтобы узнать о вашем мероприятии \n'
-                                              f'подробнее.\n \n'
-                                              f'Для того, чтобы начать ввод объявления заново нажмите /cancel',
-                             reply_markup=keyboard, parse_mode='HTML')
-            bot.register_next_step_handler(message, handle_event_offer)
+            bot.send_message(message.chat.id, f'<strong>Введите адрес</strong> мероприятия \n'
+                                      f'Вы можете вставить ссылку на 2Гис или Я- \n'
+                                      f'карты с адресом вашего мероприятия, НО её \n'
+                                      f'необходимо вшить в текст \n \n'
+                                      f'Для того, чтобы начать ввод объявления заново нажмите /cancel',
+                             parse_mode='HTML')
+
+            bot.register_next_step_handler(message, handle_address)
 
             # else:
             # bot.send_message(message.chat.id,
@@ -303,7 +295,82 @@ def handle_event_people_count(message):
         bot.send_message(message.chat.id, 'Некорректный ввод')
         bot.register_next_step_handler(message, handle_event_people_count)
 
+#обработка адреса
+def handle_address(message):
+    if message.text:
+        if message.text == '/cancel':
+            handle_cancel(message)
+        else:
+            try:
+                chat_id = message.chat.id
+                users_db[chat_id]['address'] = message.text
+            except KeyError:
+                handle_cancel(message)
+                return
+            send_current_state(chat_id, 'user')
+            bot.send_message(chat_id, '<strong>Введите Цену</strong> мероприятия \n \n'
+                                      'также вы можете указать скидки и промокоды \n \n'
+                                      'Для того, чтобы начать ввод объявления заново нажмите /cancel', parse_mode='HTML')
+            bot.register_next_step_handler(message, handle_price)
+    else:
+        bot.send_message(message.chat.id, 'Некорректный ввод')
+        bot.register_next_step_handler(message, handle_address)
 
+#обработка стоимости
+def handle_price(message):
+    if message.text:
+        if message.text == '/cancel':
+            handle_cancel(message)
+        else:
+            try:
+                chat_id = message.chat.id
+                users_db[chat_id]['price'] = message.text
+            except KeyError:
+                handle_cancel(message)
+                return
+            send_current_state(chat_id, 'user')
+            bot.send_message(chat_id, '<strong>Введите описание </strong> (максимум 710 символов) \n',
+                             parse_mode='HTML')
+            bot.register_next_step_handler(message, handle_description)
+    else:
+        bot.send_message(message.chat.id, 'Некорректный ввод')
+        bot.register_next_step_handler(message, handle_price)
+
+
+#обработка описания
+def handle_description(message):
+    if message.text:
+        if len(message.text) > 600:
+            bot.send_message(message.chat.id, 'Слишком длинное сообщение')
+            bot.register_next_step_handler(message, handle_description)
+        else:
+            if message.text == '/cancel':
+                handle_cancel(message)
+            else:
+                try:
+                    chat_id = message.chat.id
+                    users_db[chat_id]['description'] = message.text
+                except KeyError:
+                    handle_cancel(message)
+                    return
+                send_current_state(chat_id, 'user')
+
+                skip_button = types.KeyboardButton("Пропустить")
+                keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+                keyboard.add(skip_button)
+
+                sent_message = bot.send_message(message.chat.id, f'<strong>Введите оффер </strong> (необязательно): \n \n'
+                                                  f'Оффер - это предложение(сильное \n'
+                                                  f'предложение), стимулирующее к тому,\n'
+                                                  f'чтобы узнать о вашем мероприятии \n'
+                                                  f'подробнее.\n \n'
+                                                  f'Для того, чтобы начать ввод объявления заново нажмите /cancel',
+                                 parse_mode='HTML', reply_markup=keyboard)
+                users_db['current_message'] = sent_message.message_id
+                bot.register_next_step_handler(message, handle_event_offer)
+    else:
+        bot.send_message(message.chat.id, 'Некорректный ввод')
+        bot.register_next_step_handler(message, handle_description)
 
 #обработчик ввода оффера
 def handle_event_offer(message):
@@ -415,8 +482,11 @@ def handle_hashtags(message):
                     handle_cancel(message)
                     return
                 send_current_state(chat_id, 'user')
-                bot.send_message(chat_id, '<strong>Введите описание </strong> (максимум 710 символов) \n', parse_mode='HTML')
-                bot.register_next_step_handler(message, handle_description)
+                bot.send_message(chat_id, 'Укажите ссылку на регистрацию билетов,  '
+                                          'это может быть сайт, лид форма, личка менеджера ТГ. '
+                                          'В приложении запрещены ссылки на ватсап чаты, '
+                                          'телеграм каналы и чаты (это реклама) \n')
+                bot.register_next_step_handler(message, handle_url)
             else:
                 bot.send_message(message.chat.id, f'Введите хэштеги с решеткой:\n'
                                                   f'Пример: #biz #Psy #magic'
@@ -426,76 +496,7 @@ def handle_hashtags(message):
         bot.send_message(message.chat.id, 'Некорректный ввод')
         bot.register_next_step_handler(message, handle_hashtags)
 
-#обработка описания
-def handle_description(message):
-    if message.text:
-        if len(message.text) > 600:
-            bot.send_message(message.chat.id, 'Слишком длинное сообщение')
-            bot.register_next_step_handler(message, handle_description)
-        else:
-            if message.text == '/cancel':
-                handle_cancel(message)
-            else:
-                try:
-                    chat_id = message.chat.id
-                    users_db[chat_id]['description'] = message.text
-                except KeyError:
-                    handle_cancel(message)
-                    return
-                send_current_state(chat_id, 'user')
-                bot.send_message(chat_id, f'<strong>Введите адрес</strong> мероприятия \n'
-                                          f'Вы можете вставить ссылку на 2Гис или Я- \n'
-                                          f'карты с адресом вашего мероприятия, НО её \n'
-                                          f'необходимо вшить в текст \n \n'
-                                          f'Для того, чтобы начать ввод объявления заново нажмите /cancel', parse_mode='HTML')
-                bot.register_next_step_handler(message, handle_address)
-    else:
-        bot.send_message(message.chat.id, 'Некорректный ввод')
-        bot.register_next_step_handler(message, handle_description)
 
-
-#обработка адреса
-def handle_address(message):
-    if message.text:
-        if message.text == '/cancel':
-            handle_cancel(message)
-        else:
-            try:
-                chat_id = message.chat.id
-                users_db[chat_id]['address'] = message.text
-            except KeyError:
-                handle_cancel(message)
-                return
-            send_current_state(chat_id, 'user')
-            bot.send_message(chat_id, '<strong>Введите Цену</strong> мероприятия \n \n'
-                                      'также вы можете указать скидки и промокоды \n \n'
-                                      'Для того, чтобы начать ввод объявления заново нажмите /cancel', parse_mode='HTML')
-            bot.register_next_step_handler(message, handle_price)
-    else:
-        bot.send_message(message.chat.id, 'Некорректный ввод')
-        bot.register_next_step_handler(message, handle_address)
-
-#обработка стоимости
-def handle_price(message):
-    if message.text:
-        if message.text == '/cancel':
-            handle_cancel(message)
-        else:
-            try:
-                chat_id = message.chat.id
-                users_db[chat_id]['price'] = message.text
-            except KeyError:
-                handle_cancel(message)
-                return
-            send_current_state(chat_id, 'user')
-            bot.send_message(chat_id, 'Укажите ссылку на регистрацию билетов,  '
-                                      'это может быть сайт, лид форма, личка менеджера ТГ. '
-                                      'В приложении запрещены ссылки на ватсап чаты, '
-                                      'телеграм каналы и чаты (это реклама) \n')
-            bot.register_next_step_handler(message, handle_url)
-    else:
-        bot.send_message(message.chat.id, 'Некорректный ввод')
-        bot.register_next_step_handler(message, handle_price)
 
 #обработка ссылки
 def handle_url(message):
@@ -525,7 +526,10 @@ def all_correct(chat_id):
         btn = types.InlineKeyboardButton(button, callback_data=button)
         keyboard.add(btn)
 
-    sent_message = bot.send_message(chat_id, 'Проверьте, всё ли верно?', reply_markup=keyboard)
+    sent_message = bot.send_message(chat_id, f'Ваш объявление будет опубликовано в <strong>{users_db[chat_id]["city"]} </strong> \n'
+                                             f'В канале и группе приложения Mero4You после модерации Админом \n \n'
+                                             f'Проверьте, всё ли верно?',
+                                    reply_markup=keyboard, parse_mode='HTML')
     users_db[chat_id]['current_message'] = sent_message.message_id
 
 
@@ -560,7 +564,7 @@ def result_correct(call):
 @bot.message_handler(commands=['cancel'])
 def handle_cancel(message):
     chat_id = message.chat.id
-
+    remove_keyboard = types.ReplyKeyboardRemove()
 
     if chat_id in users_db:
         if 'current_message' in users_db[chat_id]:
@@ -571,7 +575,7 @@ def handle_cancel(message):
                 pass
         del users_db[chat_id]
 
-    bot.send_message(chat_id, "Создание объявления отменено. Для создания нового напишите /start")
+    bot.send_message(chat_id, "Создание объявления отменено. Для создания нового напишите /start", reply_markup=remove_keyboard)
 
 
 def handle_cancel_without_message(message):
@@ -646,13 +650,23 @@ def send_current_state(chat_id, source):
         try:
             if source == 'user':
                 bot.send_message(chat_id, 'Сейчас объявление выглядит так:\n')
-                bot.send_photo(chat_id, user_data.get('image', ''), caption=post_text, parse_mode='HTML', reply_markup=inline_keyboard)
+                if user_data['image'] == 'skip':
+                    bot.send_message(chat_id, post_text, parse_mode='HTML', reply_markup=inline_keyboard)
+                else:
+                    bot.send_photo(chat_id, user_data.get('image', ''), caption=post_text, parse_mode='HTML', reply_markup=inline_keyboard)
             elif type(source) is list:
                 if source[0] == 'channel':
                     if source[1] == 'long':
-                        bot.send_photo(chat_id, user_data.get('image', ''), caption=post_text, parse_mode='HTML', reply_markup=inline_keyboard)
+                        if user_data['image'] == 'skip':
+                            bot.send_message(chat_id, post_text, parse_mode='HTML', reply_markup=inline_keyboard)
+                        else:
+                            bot.send_photo(chat_id, user_data.get('image', ''), caption=post_text, parse_mode='HTML',
+                                           reply_markup=inline_keyboard)
                     elif source[1] == 'short':
-                        bot.send_photo(chat_id, user_data.get('image', ''), caption=post_text_short, parse_mode='HTML')
+                        if user_data['image'] == 'skip':
+                            bot.send_message(chat_id, post_text_short, parse_mode='HTML', reply_markup=inline_keyboard)
+                        else:
+                            bot.send_photo(chat_id, user_data.get('image', ''), caption=post_text_short, parse_mode='HTML')
         except telebot.apihelper.ApiTelegramException as e:
             if source == 'user':
                 bot.send_message(chat_id, 'Некорректная ссылка, создайте объявление заново, написав команду /start')
