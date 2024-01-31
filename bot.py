@@ -605,7 +605,7 @@ def send_current_state(chat_id, source):
         try:
             users_db[list(users_db.keys())[0]]['data_hashtag'] = output_date_hash
         except TypeError:
-            users_db.get(list(users_db.keys())[0], {}).setdefault('data_hashtag', output_date_hash)
+            users_db[chat_id]['data_hashtag'] = output_date_hash
 
         date_res = datetime.strptime(str(user_data['date']), "%Y-%m-%d")
         output_date = date_res.strftime("%d %B (%A)")
