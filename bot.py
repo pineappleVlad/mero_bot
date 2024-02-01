@@ -647,6 +647,8 @@ def send_current_state(chat_id, source):
     if 'url' in user_data:
         url_button = types.InlineKeyboardButton("Регистрация", url=user_data['url'])
         inline_keyboard = types.InlineKeyboardMarkup().row(url_button) if url_button else None
+    if 'image' not in user_data:
+        user_data['image'] = 'skip'
 
 
     if len(post_text) <= 1024:
