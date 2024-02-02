@@ -44,7 +44,7 @@ def handle_start(message):
     if chat_id in users_db and 'current_message' in users_db[chat_id]:
         try:
             bot.edit_message_reply_markup(chat_id, users_db[chat_id]['current_message'])
-        except Exception as e:
+        except Exception:
             pass
 
     city_buttons = types.InlineKeyboardMarkup()
