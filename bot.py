@@ -7,12 +7,12 @@ from datetime import datetime
 import locale
 import os, sys
 from requests.exceptions import ConnectionError, ReadTimeout
-from data import base_headings, cities, buttons, channel_ids_long, channel_ids_short, biz_hashtags, other_hashtags
+from data import base_headings, cities, buttons, channel_ids_long, channel_ids_short, biz_hashtags, other_hashtags, post_text_for_channel_send
 
-
+locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
 # conn = psycopg2.connect(dbname=DB_NAME, user=DB_LOGIN, password=DB_PASSWORD)
 # cursor = conn.cursor()
-locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
+
 bot = telebot.TeleBot(TOKEN)
 
 # Словарь для хранения данных пользователей
@@ -147,7 +147,9 @@ def handle_event_image_input(message):
 # Обработка ввода темы мероприятия
 def handle_topic_input(message):
     if message.text:
-        if message.text[0] != '/':
+        if message.text == '/cancel':
+            handle_cancel(message)
+        else:
             try:
                 chat_id = message.chat.id
                 users_db[chat_id]['topic'] = message.text
@@ -155,15 +157,12 @@ def handle_topic_input(message):
                 handle_cancel(message)
                 return
 
-
             bot.send_message(chat_id, f"Введите <strong> название мероприятия </strong> \n \n"
                                       f"Введите название вашего мероприятия. Кавычки не нужны! \n \n"
                                       f"Для того, чтобы начать ввод объявление заново нажмите /cancel",
                              parse_mode='HTML')
 
             bot.register_next_step_handler(message, handle_event_name_input)
-        elif message.text == '/cancel':
-            handle_cancel(message)
     else:
         bot.send_message(message.chat.id, 'Некорректный ввод')
         bot.register_next_step_handler(message, handle_topic_input)
@@ -179,12 +178,12 @@ def handle_event_name_input(message):
                 try:
                     chat_id = message.chat.id
                     users_db[chat_id]['event_name'] = message.text
-                    send_current_state(chat_id, 'user')
+                    send_current_state(chat_id)
                 except KeyError:
                     handle_cancel(message)
                     return
 
-                calendar, step = DetailedTelegramCalendar().build()
+                calendar, step = DetailedTelegramCalendar(locale='ru').build()
                 sent_message = bot.send_message(message.chat.id,
                                  f"Теперь заполним конкретику по нашему мероприятию \n \n"
                                  f"<strong>Введите дату </strong> начала мероприятия",
@@ -196,6 +195,7 @@ def handle_event_name_input(message):
     else:
         bot.send_message(message.chat.id, 'Некорректный ввод')
         bot.register_next_step_handler(message, handle_event_name_input)
+
 
 
 #ОБРАБОТЧИК ДЛЯ ДАТЫ
@@ -218,10 +218,10 @@ def cal(c):
                 handle_cancel(c)
                 bot.send_message(c.message.chat.id, f'Для создания объявления напишите /start')
                 return
-            send_current_state(chat_id=c.message.chat.id, source='user')
+            send_current_state(chat_id=c.message.chat.id)
 
 
-            bot.send_message(c.message.chat.id, f'**Введите время** мероприятия \n'
+            sent_message = bot.send_message(c.message.chat.id, f'**Введите время** мероприятия \n'
                                                 f'Примеры: `Начало в 18:00`\n'
                                                 f'или "С 15:00 до 18:00"\n'
                                                 f'`9:00`  `10:00`  `11:00`  `12:00` \n'
@@ -230,6 +230,7 @@ def cal(c):
                                                 f'`21:00`  `22:00`  `23:00`  `00:00` \n'
                                                 f'Тапните на время, чтобы скопировать.\n',
                          parse_mode='Markdown')
+            users_db[c.message.chat.id]['current_message'] = sent_message.message_id
             bot.register_next_step_handler(c.message, handle_event_time_input)
     else:
         bot.send_message(c.chat.id, 'Некорректный ввод')
@@ -241,12 +242,13 @@ def handle_event_time_input(message):
     if message.text:
         if message.text == '/cancel':
             handle_cancel(message)
+            return
         try:
             users_db[message.chat.id]['time'] = message.text
         except KeyError:
             handle_cancel(message)
             return
-        send_current_state(chat_id=message.chat.id, source='user')
+        send_current_state(chat_id=message.chat.id)
         bot.send_message(message.chat.id, f'Введите <strong> количество участников </strong>\n \n'
                                           f'если неизвестно то поставьте "-"', parse_mode='HTML'
                          )
@@ -258,39 +260,33 @@ def handle_event_time_input(message):
 
 #обработчик ввода кол-ва людей
 def handle_event_people_count(message):
-    # number_pattern = re.compile(r'^\d+$')
     if message.text:
         if message.text == '/cancel':
             handle_cancel(message)
-        else:
-            # if number_pattern.match(message.text):
+            return
+        try:
+            users_db[message.chat.id]['people_count'] = message.text
             try:
-                users_db[message.chat.id]['people_count'] = message.text
-                try:
-                    people = int(message.text)
-                    if people > 50:
-                        users_db[message.chat.id]['hashtags'] = '#BiG '
-                except ValueError:
-                    pass
-                send_current_state(chat_id=message.chat.id, source='user')
-            except KeyError:
-                handle_cancel(message)
-                return
+                people = int(message.text)
+                if people > 50:
+                    users_db[message.chat.id]['hashtags'] = '#BiG '
+            except ValueError:
+                pass
+            send_current_state(chat_id=message.chat.id)
+        except KeyError:
+            handle_cancel(message)
+            return
 
 
-            bot.send_message(message.chat.id, f'<strong>Введите адрес</strong> мероприятия \n'
-                                      f'Вы можете вставить ссылку на 2Гис или Я- \n'
-                                      f'карты с адресом вашего мероприятия, НО её \n'
-                                      f'необходимо вшить в текст \n \n'
-                                      f'Для того, чтобы начать ввод объявления заново нажмите /cancel',
-                             parse_mode='HTML')
+        bot.send_message(message.chat.id, f'<strong>Введите адрес</strong> мероприятия \n'
+                                          f'Вы можете вставить ссылку на 2Гис или Я- \n'
+                                          f'карты с адресом вашего мероприятия, НО её \n'
+                                          f'необходимо вшить в текст \n \n'
+                                          f'Для того, чтобы начать ввод объявления заново нажмите /cancel',
+                         parse_mode='HTML')
 
-            bot.register_next_step_handler(message, handle_address)
+        bot.register_next_step_handler(message, handle_address)
 
-            # else:
-            # bot.send_message(message.chat.id,
-            #                 f'Неверный формат, нужно ввести число людей без лишних подписей (Например: 300)')
-            # bot.register_next_step_handler(message, handle_event_people_count)
     else:
         bot.send_message(message.chat.id, 'Некорректный ввод')
         bot.register_next_step_handler(message, handle_event_people_count)
@@ -300,18 +296,18 @@ def handle_address(message):
     if message.text:
         if message.text == '/cancel':
             handle_cancel(message)
-        else:
-            try:
-                chat_id = message.chat.id
-                users_db[chat_id]['address'] = message.text
-            except KeyError:
-                handle_cancel(message)
-                return
-            send_current_state(chat_id, 'user')
-            bot.send_message(chat_id, '<strong>Введите Цену</strong> мероприятия \n \n'
-                                      'также вы можете указать скидки и промокоды \n \n'
-                                      'Для того, чтобы начать ввод объявления заново нажмите /cancel', parse_mode='HTML')
-            bot.register_next_step_handler(message, handle_price)
+            return
+        try:
+            chat_id = message.chat.id
+            users_db[chat_id]['address'] = message.text
+        except KeyError:
+            handle_cancel(message)
+            return
+        send_current_state(chat_id)
+        bot.send_message(chat_id, '<strong>Введите Цену</strong> мероприятия \n \n'
+                                  'также вы можете указать скидки и промокоды \n \n'
+                                  'Для того, чтобы начать ввод объявления заново нажмите /cancel', parse_mode='HTML')
+        bot.register_next_step_handler(message, handle_price)
     else:
         bot.send_message(message.chat.id, 'Некорректный ввод')
         bot.register_next_step_handler(message, handle_address)
@@ -321,17 +317,17 @@ def handle_price(message):
     if message.text:
         if message.text == '/cancel':
             handle_cancel(message)
-        else:
-            try:
-                chat_id = message.chat.id
-                users_db[chat_id]['price'] = message.text
-            except KeyError:
-                handle_cancel(message)
-                return
-            send_current_state(chat_id, 'user')
-            bot.send_message(chat_id, '<strong>Введите описание </strong> (максимум 710 символов) \n',
-                             parse_mode='HTML')
-            bot.register_next_step_handler(message, handle_description)
+            return
+        try:
+            chat_id = message.chat.id
+            users_db[chat_id]['price'] = message.text
+        except KeyError:
+            handle_cancel(message)
+            return
+        send_current_state(chat_id)
+        bot.send_message(chat_id, '<strong>Введите описание </strong> (максимум 710 символов) \n',
+                         parse_mode='HTML')
+        bot.register_next_step_handler(message, handle_description)
     else:
         bot.send_message(message.chat.id, 'Некорректный ввод')
         bot.register_next_step_handler(message, handle_price)
@@ -340,34 +336,34 @@ def handle_price(message):
 #обработка описания
 def handle_description(message):
     if message.text:
+        if message.text == '/cancel':
+            handle_cancel(message)
+            return
         if len(message.text) > 600:
             bot.send_message(message.chat.id, 'Слишком длинное сообщение')
             bot.register_next_step_handler(message, handle_description)
         else:
-            if message.text == '/cancel':
+            try:
+                chat_id = message.chat.id
+                users_db[chat_id]['description'] = message.text
+            except KeyError:
                 handle_cancel(message)
-            else:
-                try:
-                    chat_id = message.chat.id
-                    users_db[chat_id]['description'] = message.text
-                except KeyError:
-                    handle_cancel(message)
-                    return
-                send_current_state(chat_id, 'user')
+                return
+            send_current_state(chat_id)
 
-                skip_button = types.KeyboardButton("Пропустить")
-                keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-                keyboard.add(skip_button)
+            skip_button = types.KeyboardButton("Пропустить")
+            keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            keyboard.add(skip_button)
 
-                sent_message = bot.send_message(message.chat.id, f'<strong>Введите оффер </strong> (необязательно): \n \n'
-                                                  f'Оффер - это предложение(сильное \n'
-                                                  f'предложение), стимулирующее к тому,\n'
-                                                  f'чтобы узнать о вашем мероприятии \n'
-                                                  f'подробнее.\n \n'
-                                                  f'Для того, чтобы начать ввод объявления заново нажмите /cancel',
-                                 parse_mode='HTML', reply_markup=keyboard)
-                users_db['current_message'] = sent_message.message_id
-                bot.register_next_step_handler(message, handle_event_offer)
+            sent_message = bot.send_message(message.chat.id, f'<strong>Введите оффер </strong> (необязательно): \n \n'
+                                                             f'Оффер - это предложение(сильное \n'
+                                                             f'предложение), стимулирующее к тому,\n'
+                                                             f'чтобы узнать о вашем мероприятии \n'
+                                                             f'подробнее.\n \n'
+                                                             f'Для того, чтобы начать ввод объявления заново нажмите /cancel',
+                                            parse_mode='HTML', reply_markup=keyboard)
+            users_db[chat_id]['current_message'] = sent_message.message_id
+            bot.register_next_step_handler(message, handle_event_offer)
     else:
         bot.send_message(message.chat.id, 'Некорректный ввод')
         bot.register_next_step_handler(message, handle_description)
@@ -375,33 +371,33 @@ def handle_description(message):
 #обработчик ввода оффера
 def handle_event_offer(message):
     if message.text:
-        if message.text[0] != '/':
-            chat_id = message.chat.id
-            try:
-                if message.text == 'Пропустить':
-                    users_db[chat_id]['offer'] = 'skip'
-                else:
-                    users_db[chat_id]['offer'] = message.text
-            except KeyError:
-                handle_cancel(message)
-                return
-
-            remove_keyboard = types.ReplyKeyboardRemove()
-            bot.send_message(chat_id, f'Оффер: {message.text}', reply_markup=remove_keyboard)
-
-
-            headings_buttons = types.InlineKeyboardMarkup()
-            for heading in base_headings.keys():
-                btn = types.InlineKeyboardButton(heading, callback_data=heading)
-                headings_buttons.add(btn)
-
-            send_current_state(message.chat.id, 'user')
-            sent_message = bot.send_message(chat_id, f"<strong>Выберите рубрику</strong> для размещения в Mero. \n \n"
-                                                     f"Рубрика - это тема в группе Mero",
-                                            reply_markup=headings_buttons, parse_mode='HTML')
-            users_db[chat_id]['current_message'] = sent_message.message_id
-        elif message.text == '/cancel':
+        if message.text == '/cancel':
             handle_cancel(message)
+            return
+        chat_id = message.chat.id
+        try:
+            if message.text == 'Пропустить':
+                users_db[chat_id]['offer'] = 'skip'
+            else:
+                users_db[chat_id]['offer'] = message.text
+        except KeyError:
+            handle_cancel(message)
+            return
+
+        remove_keyboard = types.ReplyKeyboardRemove()
+        bot.send_message(chat_id, f'Оффер: {message.text}', reply_markup=remove_keyboard)
+
+
+        headings_buttons = types.InlineKeyboardMarkup()
+        for heading in base_headings.keys():
+            btn = types.InlineKeyboardButton(heading, callback_data=heading)
+            headings_buttons.add(btn)
+
+        send_current_state(message.chat.id)
+        sent_message = bot.send_message(chat_id, f"<strong>Выберите рубрику</strong> для размещения в Mero. \n \n"
+                                                 f"Рубрика - это тема в группе Mero",
+                                        reply_markup=headings_buttons, parse_mode='HTML')
+        users_db[chat_id]['current_message'] = sent_message.message_id
     else:
         bot.send_message(message.chat.id, 'Некорректный ввод')
         bot.register_next_step_handler(message, handle_event_offer)
@@ -413,33 +409,33 @@ def handle_event_offer(message):
 @bot.callback_query_handler(func=lambda call: call.data in base_headings.keys())
 def handle_event_heading(call):
     if call.data:
-        if call.data == '/cancel':
-            handle_cancel(call)
-        else:
-            try:
-                chat_id = call.message.chat.id
-                users_db[chat_id]['heading'] = call.data
-            except KeyError:
-                handle_cancel(call.message)
-                return
+        if call.message.text == '/cancel':
+            handle_cancel(call.message)
+            return
+        try:
+            chat_id = call.message.chat.id
+            users_db[chat_id]['heading'] = call.data
+        except KeyError:
+            handle_cancel(call.message)
+            return
 
-            bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
+        bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
 
-            unittags = other_hashtags[call.data]
-            modified_hashtags = ['`' + hashtag + '`' for hashtag in unittags]
-            reccomend_hashtag = '\n'.join(modified_hashtags)
+        unittags = other_hashtags[call.data]
+        modified_hashtags = ['`' + hashtag + '`' for hashtag in unittags]
+        reccomend_hashtag = '\n'.join(modified_hashtags)
 
 
 
-            bot.send_message(chat_id, f'Вы выбрали рубрику: {call.data}\n \n'
-                                      f'Для навигации по приложению мы используем хэштеги \n'
-                                      f"**Введите хэштеги** мероприятия через пробел (запятые между хэштегами ставить не нужно)\n \n"
-                                      f'Рекомендуемые хэштеги в рубрике {call.data}:\n'
-                                      f'{reccomend_hashtag}\n \n'
-                                      f'Для того, чтобы скопировать хэштег, просто тапните по нему. \n'
-                                      f'Считаете, что в рубрике необходим хэштег? Напишите админу об этом \n'
-                             , parse_mode='Markdown')
-            bot.register_next_step_handler(call.message, handle_hashtags)
+        bot.send_message(chat_id, f'Вы выбрали рубрику: {call.data}\n \n'
+                                  f'Для навигации по приложению мы используем хэштеги \n'
+                                  f"**Введите хэштеги** мероприятия через пробел (запятые между хэштегами ставить не нужно)\n \n"
+                                  f'Рекомендуемые хэштеги в рубрике {call.data}:\n'
+                                  f'{reccomend_hashtag}\n \n'
+                                  f'Для того, чтобы скопировать хэштег, просто тапните по нему. \n'
+                                  f'Считаете, что в рубрике необходим хэштег? Напишите админу об этом \n',
+                         parse_mode='Markdown')
+        bot.register_next_step_handler(call.message, handle_hashtags)
     else:
         bot.send_message(call.chat.id, 'Некорректный ввод')
         bot.register_next_step_handler(call, handle_event_heading)
@@ -449,49 +445,48 @@ def handle_hashtags(message):
     if message.text:
         if message.text == '/cancel':
             handle_cancel(message)
-        else:
-            if message.text[0] == "#":
-                try:
-                    chat_id = message.chat.id
+            return
+        elif message.text[0] == "#":
+            try:
+                chat_id = message.chat.id
+                if 'heading' in users_db[chat_id]:
+                    base_hash = base_headings[users_db[chat_id]['heading']]
+                else:
+                    base_hash = ''
 
-                    if 'heading' in users_db[chat_id]:
-                        base_hash = base_headings[users_db[chat_id]['heading']]
-                    else:
-                        base_hash = ''
 
+                if 'hashtags' in users_db:
+                    users_db[chat_id]['hashtags'] += base_hash
+                else:
+                    users_db[chat_id]['hashtags'] = base_hash
 
-                    if 'hashtags' in users_db:
-                        users_db[chat_id]['hashtags'] += base_hash
-                    else:
-                        users_db[chat_id]['hashtags'] = base_hash
+                if 'data_hashtag' in users_db[chat_id]:
+                    date_hash = users_db[chat_id]['data_hashtag']
+                    base_date_hash = base_hash[:-1] + '_' + date_hash[1:4] + date_hash[-2] + date_hash[-1] + ' '
+                    users_db[chat_id]['hashtags'] += base_date_hash
 
+                for hashtag in message.text.split(' '):
                     if 'data_hashtag' in users_db[chat_id]:
                         date_hash = users_db[chat_id]['data_hashtag']
-                        base_date_hash = base_hash[:-1] + '_' + date_hash[1:4] + date_hash[-2] + date_hash[-1] + ' '
-                        users_db[chat_id]['hashtags'] += base_date_hash
+                        extra_date_hash = hashtag + '_' + date_hash[1:4] + date_hash[-2] + date_hash[-1] + ' '
+                        users_db[chat_id]['hashtags'] += extra_date_hash
+                    else:
+                        users_db[chat_id]['hashtags'] += hashtag
 
-                    for hashtag in message.text.split(' '):
-                        if 'data_hashtag' in users_db[chat_id]:
-                            date_hash = users_db[chat_id]['data_hashtag']
-                            extra_date_hash = hashtag + '_' + date_hash[1:4] + date_hash[-2] + date_hash[-1] + ' '
-                            users_db[chat_id]['hashtags'] += extra_date_hash
-                        else:
-                            users_db[chat_id]['hashtags'] += hashtag
-
-                except KeyError:
-                    handle_cancel(message)
-                    return
-                send_current_state(chat_id, 'user')
-                bot.send_message(chat_id, 'Укажите ссылку на регистрацию билетов,  '
-                                          'это может быть сайт, лид форма, личка менеджера ТГ. '
-                                          'В приложении запрещены ссылки на ватсап чаты, '
-                                          'телеграм каналы и чаты (это реклама) \n')
-                bot.register_next_step_handler(message, handle_url)
-            else:
-                bot.send_message(message.chat.id, f'Введите хэштеги с решеткой:\n'
-                                                  f'Пример: #biz #Psy #magic'
-                                 )
-                bot.register_next_step_handler(message, handle_hashtags)
+            except KeyError:
+                handle_cancel(message)
+                return
+            send_current_state(chat_id)
+            bot.send_message(chat_id, 'Укажите ссылку на регистрацию билетов,  '
+                                      'это может быть сайт, лид форма, личка менеджера ТГ. '
+                                      'В приложении запрещены ссылки на ватсап чаты, '
+                                      'телеграм каналы и чаты (это реклама) \n')
+            bot.register_next_step_handler(message, handle_url)
+        else:
+            bot.send_message(message.chat.id, f'Введите хэштеги с решеткой:\n'
+                                              f'Пример: #biz #Psy #magic'
+                            )
+            bot.register_next_step_handler(message, handle_hashtags)
     else:
         bot.send_message(message.chat.id, 'Некорректный ввод')
         bot.register_next_step_handler(message, handle_hashtags)
@@ -503,20 +498,20 @@ def handle_url(message):
     if message.text:
         if message.text == '/cancel':
             handle_cancel(message)
-        else:
-            try:
-                chat_id = message.chat.id
-                users_db[chat_id]['url'] = message.text
-            except KeyError:
-                handle_cancel(message)
-                return
-            all_correct(chat_id)
+            return
+        try:
+            chat_id = message.chat.id
+            users_db[chat_id]['url'] = message.text
+        except KeyError:
+            handle_cancel(message)
+            return
+        all_correct(chat_id)
     else:
         bot.send_message(message.chat.id, 'Некорректный ввод')
         bot.register_next_step_handler(message, handle_url)
 
 def all_correct(chat_id):
-    res = send_current_state(chat_id, 'user')
+    res = send_current_state(chat_id)
     if res == 'Error':
         return
 
@@ -536,6 +531,9 @@ def all_correct(chat_id):
 @bot.callback_query_handler(func=lambda call: call.data in buttons)
 def result_correct(call):
     if call.data:
+        if call.message.text == '/cancel':
+            handle_cancel(call.message)
+            return
         try:
             chat_id = call.message.chat.id
             users_db[chat_id]['result'] = call.data
@@ -559,7 +557,6 @@ def result_correct(call):
         bot.register_next_step_handler(call, result_correct)
 
 
-
 # Обработка команды /cancel для отмены создания объявления
 @bot.message_handler(commands=['cancel'])
 def handle_cancel(message):
@@ -577,7 +574,6 @@ def handle_cancel(message):
 
     bot.send_message(chat_id, "Создание объявления отменено. Для создания нового напишите /start", reply_markup=remove_keyboard)
 
-
 def handle_cancel_without_message(message):
     chat_id = message.chat.id
 
@@ -592,12 +588,8 @@ def handle_cancel_without_message(message):
         del users_db[chat_id]
 
 # Отправление текущего состояния объявления
-def send_current_state(chat_id, source):
-    if type(source) is list:
-        user_id = list(users_db.keys())[0]
-        user_data = users_db.get(user_id, {})
-    else:
-        user_data = users_db.get(chat_id, {})
+def send_current_state(chat_id):
+    user_data = users_db.get(chat_id, {})
 
     if 'date' in user_data:
         date_res_hash = datetime.strptime(str(user_data['date']), "%Y-%m-%d")
@@ -635,13 +627,6 @@ def send_current_state(chat_id, source):
                 f'Разместил: @{user_data.get("username", "")} \n \n' \
                 f'{output_date_hash} {user_data.get("hashtags", "").replace(pattern, " ").strip()}'
 
-    post_text_short = f'<strong>{user_data.get("topic", "")}</strong>\n' \
-                f'«{user_data.get("event_name", "")}»\n \n' \
-                f'🗓{output_date}\n' \
-                f'⏰{user_data.get("time", "")}\n' \
-                f'👥Кол-во участников: {user_data.get("people_count", "")}\n \n' \
-                f'{offer}\n \n' \
-                f'{output_date_hash} {user_data.get("hashtags", "").replace(pattern, " ").strip()}'
 
     url_button, inline_keyboard = None, None
     if 'url' in user_data:
@@ -653,30 +638,15 @@ def send_current_state(chat_id, source):
 
     if len(post_text) <= 1024:
         try:
-            if source == 'user':
-                bot.send_message(chat_id, 'Сейчас объявление выглядит так:\n')
-                if user_data['image'] == 'skip':
-                    bot.send_message(chat_id, post_text, parse_mode='HTML', reply_markup=inline_keyboard)
-                else:
-                    bot.send_photo(chat_id, user_data.get('image', ''), caption=post_text, parse_mode='HTML', reply_markup=inline_keyboard)
-            elif type(source) is list:
-                if source[0] == 'channel':
-                    if source[1] == 'long':
-                        if user_data['image'] == 'skip':
-                            bot.send_message(chat_id, post_text, parse_mode='HTML', reply_markup=inline_keyboard)
-                        else:
-                            bot.send_photo(chat_id, user_data.get('image', ''), caption=post_text, parse_mode='HTML',
-                                           reply_markup=inline_keyboard)
-                    elif source[1] == 'short':
-                        if user_data['image'] == 'skip':
-                            bot.send_message(chat_id, post_text_short, parse_mode='HTML', reply_markup=inline_keyboard)
-                        else:
-                            bot.send_photo(chat_id, user_data.get('image', ''), caption=post_text_short, parse_mode='HTML')
+            bot.send_message(chat_id, 'Сейчас объявление выглядит так:\n')
+            if user_data['image'] == 'skip':
+                bot.send_message(chat_id, post_text, parse_mode='HTML', reply_markup=inline_keyboard)
+            else:
+                bot.send_photo(chat_id, user_data.get('image', ''), caption=post_text, parse_mode='HTML', reply_markup=inline_keyboard)
         except telebot.apihelper.ApiTelegramException as e:
-            if source == 'user':
-                bot.send_message(chat_id, 'Некорректная ссылка, создайте объявление заново, написав команду /start')
-                if chat_id in users_db:
-                    del users_db[chat_id]
+            bot.send_message(chat_id, 'Некорректная ссылка, создайте объявление заново, написав команду /start')
+            if chat_id in users_db:
+                del users_db[chat_id]
             return 'Error'
     else:
         bot.send_message(chat_id, 'Объявление получилось слишком длинным и бот не может его обработать, создание отменено\n'
@@ -695,7 +665,6 @@ def other_message_handle(message):
                          )
 
 
-
 def send_channel_result(chat_id):
     user_data = users_db.get(chat_id, {})
     id_long, id_short = None, None
@@ -704,12 +673,14 @@ def send_channel_result(chat_id):
         id_long = channel_ids_long[city]
         id_short = channel_ids_short[city]
 
-    send_current_state(id_long, ['channel', 'long'])
-    send_current_state(id_short, ['channel', 'short'])
-
-
-
-
+    try:
+        post_text_for_channel_send(user_data, chat_id, 'long', bot, id_long)
+        post_text_for_channel_send(user_data, chat_id, 'short', bot, id_short)
+        if chat_id in users_db:
+            del users_db[chat_id]
+    except telebot.apihelper.ApiTelegramException:
+        if chat_id in users_db:
+            del users_db[chat_id]
 
 
 
